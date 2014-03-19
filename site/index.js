@@ -17,6 +17,7 @@ var chat = qsa('#commandInput')[0];
 // data channel & peers
 var channel;
 var peerMedia = {};
+var peerConns = {};
 
 // use google's ice servers
 var iceServers = [
@@ -31,6 +32,18 @@ var iceServers = [
   // }
 ];
 
+// call stats monitoring setup
+console.log(callstats);
+var AppID = "949447674";
+var AppSecret = "gOeoIsmiuJNI9XAabSxXntyPhMo=";
+
+function initCallback (err, msg) {
+  console.log("Initializing Status: err="+err+" msg="+msg);
+}
+function pcCallback (err, msg) {
+  console.log("Monitoring status: "+ err + " msg: " + msg);
+};
+
 // capture local media
 var localMedia = media({
   constraints: captureConfig('camera min:1280x720').toConstraints()
@@ -38,6 +51,7 @@ var localMedia = media({
 
 // initialise a connection
 function handleConnect(pc, id, data, monitor) {
+  peerConns[id] = pc;
   pc.getRemoteStreams().forEach(renderRemote(id));
   console.log('got a new friend: ' + id, pc);
 }
@@ -54,6 +68,11 @@ function renderRemote(id) {
 
     console.log('current active stream count = ' + activeStreams);
     peerMedia[id] = peerMedia[id].concat(media(stream).render(remotes[activeStreams % 2]));
+
+    // pc is created, tell the call stats monitor about it
+    var remoteUserID = stream.id;
+    callstats.addNewFabric(peerConns[id], remoteUserID, 'multiplex', room, pcCallback);
+    callstats.sendFabricEvent(peerConns[id], 'fabricSetup', room);
   }
 }
 
@@ -66,6 +85,8 @@ function handleLeave(id) {
     el.parentNode.removeChild(el);
   });
   peerMedia[id] = undefined;
+
+  callstats.sendFabricEvent(peerConns[id], 'fabricTerminated', room);
 }
 
 // render our local media to the target element
@@ -73,6 +94,10 @@ localMedia.render(local);
 
 // once the local media is captured broadcast the media
 localMedia.once('capture', function(stream) {
+  // initialize connection to call stats monitor
+  var userID = stream.id;
+  callstats.initialize(AppID, AppSecret, userID, initCallback);
+
   // handle the connection stuff
   quickconnect(location.href + '../../', {
     // debug: true,
@@ -82,7 +107,7 @@ localMedia.once('capture', function(stream) {
   .broadcast(stream)
   .createDataChannel('chat')
   .on('peer:connect', handleConnect)
-  .on('peer:disconnect', handleLeave)
+  .on('peer:leave', handleLeave)
   .on('chat:open', function(dc, id) {
     dc.onmessage = function(evt) {
       if (messages) {
